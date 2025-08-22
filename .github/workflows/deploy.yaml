@@ -17,7 +17,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: docker/build-push-action@v5
         with:
-          context: backend
+          context: .
           push: true
           tags: vinaykudari/super-todo:latest
       - name: Install Koyeb CLI
