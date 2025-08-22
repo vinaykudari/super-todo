@@ -1,0 +1,29 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v2
+      - uses: docker/login-action@v2
+        with:
+          username: vinaykudari
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: backend
+          push: true
+          tags: vinaykudari/super-todo:latest
+      - name: Install Koyeb CLI
+        run: |
+          curl -L https://github.com/koyeb/koyeb-cli/releases/download/v5.5.1/koyeb-cli_5.5.1_linux_amd64.tar.gz -o koyeb.tar.gz
+          tar -xzf koyeb.tar.gz
+          sudo mv koyeb /usr/local/bin/koyeb
+      - name: Redeploy API
+        run: koyeb service redeploy awake-lauraine/super-todo --token ${{ secrets.KOYEB_TOKEN_API }}
