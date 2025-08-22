@@ -6,7 +6,7 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml .
 
-RUN uv sync --frozen
+RUN uv pip install --no-cache --system -r pyproject.toml
 
 COPY . .
 
