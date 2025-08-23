@@ -303,6 +303,8 @@ class BrowserService:
                 # Start streaming in background
                 if payload.item_id:
                     asyncio.create_task(self.stream_task_to_logs(task_id, payload.item_id))
+
+                print(f"Session id: {session_id}")
                 return BrowserTaskCreated(
                     task_id=task_id,
                     session_id=session_id or "",
