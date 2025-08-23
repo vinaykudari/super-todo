@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 ItemState = Literal["pending", "processing", "completed"]
 LogLevel = Literal["info", "warning", "error", "debug"]
+OrchestrationStatus = Literal["pending", "running", "completed", "failed"]
 
 class ItemCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
@@ -16,6 +17,9 @@ class Item(BaseModel):
     state: ItemState
     created_at: datetime
     updated_at: datetime
+    ai_request: Optional[str] = None
+    orchestration_status: OrchestrationStatus = "pending"
+    orchestration_result: Optional[Dict[str, Any]] = None
 
 class ItemUpdateState(BaseModel):
     state: ItemState
