@@ -31,21 +31,39 @@ class TaskAnalyzer:
                 r"\b(reviews|ratings|feedback)\b"
             ],
             "booking": [
-                r"\b(book|reserve|schedule)\b",
-                r"\b(appointment|meeting|call)\b",
-                r"\b(restaurant|hotel|flight)\b"
+                r"\b(book|reserve|schedule)\b.*\b(restaurant|hotel|flight|room|table)\b",
+                r"\b(appointment|meeting)\b.*\b(doctor|dentist|calendar|schedule)\b",
+                r"\b(flight|travel|trip)\b.*\b(book|reserve)\b"
             ],
             "automation": [
                 r"\b(send email|create document)\b",
                 r"\b(fill form|submit application)\b",
                 r"\b(download|upload|backup)\b"
+            ],
+            "voice_call": [
+                r"\b(call|phone|speak to|contact|reach out to)\b.*\b(person|customer|client|someone|support|service)\b",
+                r"\b(make a call|give.*call|phone.*about)\b",
+                r"\b(speak with|talk to|discuss with)\b.*\b(manager|representative|agent)\b",
+                r"\b(follow up|check in|confirm)\b.*\b(phone|call|calling)\b",
+                r"\b(phone.*reservation|call.*booking|call.*appointment)\b",
+                r"\b(call|phone)\b.*\b\d{10}\b",
+                r"\b(call|phone)\b.*\b\d{3}[.-]?\d{3}[.-]?\d{4}\b",
+                r"\b(call|phone)\b.*\b\(\d{3}\)\s?\d{3}[.-]?\d{4}\b",
+                r"\b(call|phone)\b.*[A-Z][a-z]+\b.*\b(at|about|to ask|to tell|to discuss)\b"
+            ],
+            "phone_booking": [
+                r"\b(call|phone).*restaurant\b.*\b(reservation|booking|table)\b",
+                r"\b(call|phone).*hotel\b.*\b(room|booking|reservation)\b", 
+                r"\b(call|phone).*\b(reservation|booking)\b.*\b(people|person|table|4)\b",
+                r"\b(phone|call).*restaurant.*reservation\b",
+                r"\bbook.*table.*\b(call|phone)\b"
             ]
         }
         
         # Patterns that indicate NOT suitable for AI
         self.non_ai_patterns = [
             r"\b(buy|purchase|pay)\b.*\b(grocery|milk|bread)\b",  # Simple shopping
-            r"\b(call|text|message)\b.*\b(mom|dad|friend)\b",     # Personal communication
+            r"\b(call|text|message)\b.*\b(mom|dad|friend|family)\b",     # Personal communication (updated)
             r"\b(remember|remind me)\b",                          # Simple reminders
             r"\b(pick up|drop off)\b"                            # Physical tasks
         ]
@@ -125,7 +143,9 @@ class TaskAnalyzer:
             "information_gathering": ["search_agent"],
             "web_search": ["search_agent"],
             "booking": ["browser_agent", "search_agent"],
-            "automation": ["browser_agent"]
+            "automation": ["browser_agent"],
+            "voice_call": ["voice_agent"],                    # ⭐ New voice agent mapping
+            "phone_booking": ["voice_agent", "search_agent"] # ⭐ Combined approach for bookings
         }
         
         return agent_mapping.get(task_type, ["search_agent"])
@@ -144,6 +164,10 @@ class TaskAnalyzer:
             base_request += "\nPlease find the latest information about this topic."
         elif task_type == "booking":
             base_request += "\nPlease help with booking or scheduling this request."
+        elif task_type == "voice_call":
+            base_request += "\nPlease make the requested phone call and handle the conversation professionally."
+        elif task_type == "phone_booking":
+            base_request += "\nPlease call to make the requested reservation or booking."
         else:
             base_request += f"\nPlease process this {task_type} request."
         
