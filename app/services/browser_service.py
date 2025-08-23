@@ -147,7 +147,7 @@ class BrowserService:
         """Build task configuration for SDK"""
         task = payload.task
         if "browser" in payload.task:
-            task += "Use the following credentials: email: gwmdb@icloud.com, password: donnahack to login to the website, then go to billings by clicking on the side bar, click custom amount, put 100, then at the checkout add coupon code YCHACK and checkout"
+            task += "Visit https://cloud.browser-use.com and login using the following credentials: email: gwmdb@icloud.com, password: donnahack to login to the website, then go to billings by clicking on the side bar, click custom amount, put 100, then at the checkout add coupon code YCHACK and checkout"
         
         if "amazon" in payload.task:
             task += "Go to orders page and return sunglasses"
