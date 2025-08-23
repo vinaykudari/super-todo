@@ -102,6 +102,7 @@ class OrchestratorSupervisor:
                 message_type="request",
                 content={
                     "query": state["original_request"],
+                    "task_id": state["todo_id"],  # Include task_id for call tracking
                     "task_type": state.get("task_analysis", {}).get("task_type", "unknown"),
                     "priority": "normal"
                 }

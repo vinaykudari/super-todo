@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import items, logs, browser, orchestrator
+from .routers import items, logs, browser, orchestrator, vapi_webhook
 from .config import LOG_LEVEL
 
 # Configure logging
@@ -37,3 +37,4 @@ app.include_router(items.router)
 app.include_router(logs.router)
 app.include_router(browser.router)
 app.include_router(orchestrator.router)
+app.include_router(vapi_webhook.router)

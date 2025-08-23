@@ -39,5 +39,24 @@ create table if not exists public.attachments (
 
 create index if not exists idx_attachments_item_id on public.attachments(item_id);
 
+-- Call metadata table to track VAPI call_id -> task_id mappings
+create table if not exists public.call_metadata (
+  id uuid primary key default gen_random_uuid(),
+  call_id text not null unique,
+  task_id uuid not null references public.items(id) on delete cascade,
+  status text not null default 'initiated',  -- initiated, in_progress, completed, failed
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Keep updated_at fresh for call_metadata
+drop trigger if exists handle_updated_at_call_metadata on public.call_metadata;
+create trigger handle_updated_at_call_metadata
+before update on public.call_metadata
+for each row execute procedure extensions.moddatetime (updated_at);
+
+create index if not exists idx_call_metadata_call_id on public.call_metadata(call_id);
+create index if not exists idx_call_metadata_task_id on public.call_metadata(task_id);
+
 -- RLS is ON by default in Supabase; using SERVICE ROLE key bypasses policies.
 -- If you later want to use anon key from a frontend, add granular RLS policies.

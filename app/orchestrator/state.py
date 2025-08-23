@@ -30,7 +30,7 @@ class ExecutionStatus(str, Enum):
 class ReactiveState(TypedDict):
     """Shared state for reactive agent network"""
     # Core task information
-    todo_id: str
+    todo_id: str  # This is the task_id for external systems
     original_request: str
     
     # Task analysis

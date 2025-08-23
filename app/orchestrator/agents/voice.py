@@ -5,10 +5,12 @@ import re
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
+from uuid import UUID
 
 from vapi import Vapi
 from .base import ReactiveAgent
 from ..state import AgentMessage, ReactiveState, create_agent_message
+from ...services.call_metadata_service import CallMetadataService
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,9 @@ class VAPIVoiceAgent(ReactiveAgent):
         # Initialize VAPI client
         self.vapi_token = self._get_vapi_token()
         self.vapi = Vapi(token=self.vapi_token)
+        
+        # Initialize call metadata service
+        self.call_service = CallMetadataService()
         
         # Configuration
         self.assistant_id = os.getenv("VAPI_ASSISTANT_ID", "ab2953ac-1a50-403a-af6e-710cfa8bec1f")
@@ -84,11 +89,20 @@ class VAPIVoiceAgent(ReactiveAgent):
         try:
             logger.info("Processing voice call request")
             
-            # Extract call details
+            # Extract call details and task ID
             request = message["content"].get("query", state["original_request"])
+            task_id = message["content"].get("task_id") or state.get("task_id") or state.get("todo_id")
+            
+            if not task_id:
+                raise Exception("Task ID is required for call tracking")
+            
+            # Convert task_id to UUID if it's a string
+            if isinstance(task_id, str):
+                task_id = UUID(task_id)
+            
             call_details = self._extract_call_details(request)
             
-            logger.info(f"Extracted call details: {call_details}")
+            logger.info(f"Extracted call details: {call_details} for task: {task_id}")
             
             # Validate phone number
             if not call_details.get("phone_number"):
@@ -96,15 +110,20 @@ class VAPIVoiceAgent(ReactiveAgent):
             
             # Create outbound call using VAPI SDK
             call_result = await self._initiate_call(call_details)
+            call_id = call_result["call_id"]
             
-            logger.info(f"Call initiated successfully: {call_result['call_id']}")
+            logger.info(f"Call initiated successfully: {call_id}")
+            
+            # Store call_id -> task_id mapping
+            await self.call_service.create_call_mapping(call_id, task_id)
             
             return create_agent_message(
                 from_agent=self.agent_id,
                 to_agent="supervisor",
                 message_type="response",
                 content={
-                    "call_id": call_result["call_id"],
+                    "call_id": call_id,
+                    "task_id": str(task_id),
                     "status": "call_initiated",
                     "phone_number": call_details.get("phone_number"),
                     "assistant_id": self.assistant_id,
