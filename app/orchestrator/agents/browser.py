@@ -1,7 +1,7 @@
 """Browser Agent for Web Automation Tasks"""
 
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from .base import ReactiveAgent
@@ -148,13 +148,17 @@ class ReactiveBrowserAgent(ReactiveAgent):
         # Determine if we should save browser data
         save_browser_data = self._should_save_browser_data(query)
         
+        # Determine optimal viewport settings based on query
+        viewport_settings = self._get_viewport_settings(query)
+        
         # Create the request
         return BrowserTaskRequest(
             task=query,
             item_id=item_id,
             allowed_domains=allowed_domains,
             wait=False,  # Always use async for LangGraph integration
-            save_browser_data=save_browser_data
+            save_browser_data=save_browser_data,
+            viewport_settings=viewport_settings
         )
     
     def _extract_domains(self, query: str) -> List[str]:
@@ -207,6 +211,30 @@ class ReactiveBrowserAgent(ReactiveAgent):
                 return True
         
         return False
+    
+    def _get_viewport_settings(self, query: str) -> Optional[Dict[str, Any]]:
+        """Determine optimal viewport settings based on query context"""
+        query_lower = query.lower()
+        
+        # Check if query mentions specific devices or screen sizes
+        if any(device in query_lower for device in ["desktop", "laptop", "computer", "large screen"]):
+            # Use desktop viewport for desktop-specific tasks
+            return {
+                "width": 1920,
+                "height": 1080,
+                "is_mobile": False
+            }
+        elif any(device in query_lower for device in ["tablet", "ipad"]):
+            # Use tablet viewport for tablet-specific tasks
+            return {
+                "width": 768,
+                "height": 1024,
+                "is_mobile": True
+            }
+        else:
+            # Default to mobile viewport for better live video viewing experience
+            # This will use the default mobile settings from the service
+            return None
     
     def _estimate_completion_time(self, task: Dict[str, Any]) -> int:
         """Estimate completion time in seconds"""

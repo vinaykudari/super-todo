@@ -16,6 +16,12 @@ from ..schemas import LogCreate
 from ..services.logs_service import LogsService
 from ..convex_client import ConvexService
 from ..repositories.items_repository import ItemsRepository # optional Supabase status sync
+from ..config import (
+    BROWSER_DEFAULT_VIEWPORT_WIDTH,
+    BROWSER_DEFAULT_VIEWPORT_HEIGHT,
+    BROWSER_DEFAULT_DEVICE_SCALE_FACTOR,
+    BROWSER_MOBILE_BY_DEFAULT
+)
 SYNC_SUPABASE_STATUS = os.getenv("SYNC_SUPABASE_STATUS", "true").lower() == "true"
 BROWSER_USE_API_KEY = os.getenv("BROWSER_USE_API_KEY") or ""
 # -------------------- Pydantic IO models --------------------
@@ -31,6 +37,7 @@ class BrowserTaskRequest(BaseModel):
     included_file_names: Optional[List[str]] = None
     secrets: Optional[Dict[str, str]] = None
     save_browser_data: Optional[bool] = None
+    viewport_settings: Optional[Dict[str, Any]] = Field(None, description="Custom viewport settings for browser (width, height, device_scale_factor, etc.)")
 class BrowserTaskCreated(BaseModel):
     task_id: str
     session_id: str
@@ -153,6 +160,31 @@ class BrowserService:
             browser_settings["allowed_domains"] = payload.allowed_domains
         if payload.save_browser_data is not None:
             browser_settings["keep_alive"] = payload.save_browser_data
+        
+        # Add mobile-compatible viewport settings for better live video experience
+        # Use Browser Use API parameters as documented at:
+        # https://docs.browser-use.com/api-reference/browser-profiles/create-browser-profile
+        
+        # Set default mobile viewport for better live video experience
+        default_viewport_width = BROWSER_DEFAULT_VIEWPORT_WIDTH
+        default_viewport_height = BROWSER_DEFAULT_VIEWPORT_HEIGHT
+        default_is_mobile = BROWSER_MOBILE_BY_DEFAULT
+        
+        # Use custom viewport settings if provided, otherwise use mobile defaults
+        if payload.viewport_settings:
+            browser_viewport_width = payload.viewport_settings.get("width", default_viewport_width)
+            browser_viewport_height = payload.viewport_settings.get("height", default_viewport_height)
+            is_mobile = payload.viewport_settings.get("is_mobile", default_is_mobile)
+        else:
+            browser_viewport_width = default_viewport_width
+            browser_viewport_height = default_viewport_height
+            is_mobile = default_is_mobile
+            
+        # Set Browser Use API compatible viewport parameters
+        browser_settings["browserViewportWidth"] = browser_viewport_width
+        browser_settings["browserViewportHeight"] = browser_viewport_height
+        browser_settings["isMobile"] = is_mobile
+        
         if browser_settings:
             config["browser_settings"] = browser_settings
         # Output format
