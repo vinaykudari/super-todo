@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import items
+from .routers import items, logs
 
 app = FastAPI(title="Super Todo API (Hackathon)")
 
@@ -18,3 +18,4 @@ def health():
     return {"ok": True}
 
 app.include_router(items.router)
+app.include_router(logs.router)

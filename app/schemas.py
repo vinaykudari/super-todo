@@ -1,8 +1,9 @@
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
 
 ItemState = Literal["pending", "processing", "completed"]
+LogLevel = Literal["info", "warning", "error", "debug"]
 
 class ItemCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
@@ -30,3 +31,23 @@ class Attachment(BaseModel):
 
 class ItemWithAttachments(Item):
     attachments: List[Attachment] = []
+
+# Log schemas
+class LogCreate(BaseModel):
+    item_id: str
+    message: str
+    level: LogLevel = "info"
+    metadata: Optional[Dict[str, Any]] = None
+
+class Log(BaseModel):
+    _id: str
+    item_id: str
+    message: str
+    level: LogLevel
+    timestamp: int
+    metadata: Optional[Dict[str, Any]] = None
+    _creationTime: int
+
+class LogsResponse(BaseModel):
+    logs: List[Log]
+    nextCursor: Optional[str] = None

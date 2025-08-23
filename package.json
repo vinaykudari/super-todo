@@ -1,0 +1,11 @@
+{
+  "name": "super-todo",
+  "version": "1.0.0",
+  "description": "Super Todo API with Convex logging",
+  "scripts": {
+    "dev": "convex dev"
+  },
+  "devDependencies": {
+    "convex": "^1.26.1"
+  }
+}
