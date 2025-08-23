@@ -40,6 +40,18 @@ class TaskAnalyzer:
                 r"\b(fill form|submit application)\b",
                 r"\b(download|upload|backup)\b"
             ],
+            "browser_automation": [
+                r"\b(navigate|browse|visit|go to|open)\b.*\b(website|site|url|page)\b",
+                r"\b(click|press|tap|select)\b.*\b(button|link|element)\b",
+                r"\b(fill|enter|type|input)\b.*\b(form|field|text)\b.*\b(online|website|web)\b",
+                r"\b(screenshot|capture|save)\b.*\b(page|screen|website)\b",
+                r"\b(login|sign in|authenticate)\b.*\b(website|online|account)\b",
+                r"\b(return|cancel|refund)\b.*\b(order|purchase|item)\b.*\b(online|amazon|ebay)\b",
+                r"\b(amazon|ebay|shopping|e-commerce)\b.*\b(order|return|refund|buy|purchase)\b",
+                r"\b(scrape|extract|get)\b.*\b(data|information|content)\b.*\b(from|website|page)\b",
+                r"\b(automate|automation)\b.*\b(web|browser|online)\b",
+                r"\b(checkout|cart|payment)\b.*\b(online|website)\b"
+            ],
             "voice_call": [
                 r"\b(call|phone|speak to|contact|reach out to)\b.*\b(person|customer|client|someone|support|service)\b",
                 r"\b(make a call|give.*call|phone.*about)\b",
@@ -144,6 +156,7 @@ class TaskAnalyzer:
             "web_search": ["search_agent"],
             "booking": ["browser_agent", "search_agent"],
             "automation": ["browser_agent"],
+            "browser_automation": ["browser_agent"],          # ⭐ Browser agent for web automation
             "voice_call": ["voice_agent"],                    # ⭐ New voice agent mapping
             "phone_booking": ["voice_agent", "search_agent"] # ⭐ Combined approach for bookings
         }
@@ -164,6 +177,8 @@ class TaskAnalyzer:
             base_request += "\nPlease find the latest information about this topic."
         elif task_type == "booking":
             base_request += "\nPlease help with booking or scheduling this request."
+        elif task_type == "browser_automation":
+            base_request += "\nPlease automate the browser to complete this web-based task."
         elif task_type == "voice_call":
             base_request += "\nPlease make the requested phone call and handle the conversation professionally."
         elif task_type == "phone_booking":

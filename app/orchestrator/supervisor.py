@@ -10,6 +10,7 @@ from langgraph.graph.state import CompiledStateGraph
 from .state import ReactiveState, ExecutionStatus, create_agent_message, add_message_to_state, update_agent_state
 from .agents.search import ReactiveSearchAgent
 from .agents.voice import VAPIVoiceAgent
+from .agents.browser import ReactiveBrowserAgent
 from .task_analyzer import TaskAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,8 @@ class OrchestratorSupervisor:
         self.graph: CompiledStateGraph = self._build_graph()
         self.agents = {
             "search_agent": ReactiveSearchAgent(),
-            "voice_agent": VAPIVoiceAgent()  # ⭐ Add voice agent
+            "voice_agent": VAPIVoiceAgent(),  # ⭐ Add voice agent
+            "browser_agent": ReactiveBrowserAgent()  # ⭐ Add browser agent
         }
         self.task_analyzer = TaskAnalyzer()
         

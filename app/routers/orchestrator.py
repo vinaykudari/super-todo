@@ -238,8 +238,7 @@ async def run_orchestration(
             # Create summary
             summary = create_result_summary(search_results, aggregated, task_analysis)
             
-            # Update item status to completed
-            await items_service.update_item_state(item_id, ItemUpdateState(state="completed"))
+            # Don't mark as completed - let the browser service handle status updates
             
             # Store orchestration result in item description
             current_item = await items_service.get_item_with_attachments(item_id)
