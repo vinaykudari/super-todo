@@ -112,7 +112,6 @@ class ItemsService:
                 )
             return items
         except Exception as e:
-            print(f"Failed to retrieve items {e}")
             raise HTTPException(status_code=500, detail="Failed to retrieve items")
 
     async def get_item_with_attachments(self, item_id: str) -> ItemWithAttachments:

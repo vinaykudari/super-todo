@@ -3,12 +3,11 @@
 import logging
 from typing import Dict, Any, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
-from pydantic import BaseModel
 
 from ..orchestrator import OrchestratorSupervisor
 from ..services.items_service import ItemsService
 from ..dependencies import get_items_service
-from ..schemas import ItemUpdateState
+from ..schemas import ItemUpdateState, TaskAnalysisResponse, OrchestrationResponse
 from ..config import AI_CONFIDENCE_THRESHOLD
 
 logger = logging.getLogger(__name__)
@@ -16,21 +15,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/orchestrator", tags=["orchestrator"])
 
 
-class TaskAnalysisResponse(BaseModel):
-    """Response from task analysis"""
-    item_id: str
-    suitable: bool
-    confidence: float
-    task_type: str
-    reasoning: str
-    orchestration_started: bool = False
-
-
-class OrchestrationResponse(BaseModel):
-    """Response from orchestration trigger"""
-    message: str
-    item_id: str
-    orchestration_started: bool
 
 
 # Global supervisor instance (in production, use dependency injection)

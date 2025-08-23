@@ -1,6 +1,6 @@
 from typing import Optional, List, Literal, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 ItemState = Literal["pending", "processing", "completed"]
 LogLevel = Literal["info", "warning", "error", "debug"]
@@ -61,9 +61,44 @@ class LogsResponse(BaseModel):
 
 # Browser automation schemas
 class BrowserTaskRequest(BaseModel):
-    item_id: str
-    task: str = Field(..., description="Natural language description of the task to perform")
-    allowed_domains: Optional[List[str]] = Field(default=None, description="List of allowed domains for security")
+    task: str = Field(..., description="Natural-language instruction")
+    item_id: Optional[str] = Field(None, description="If set, logs + status updates tie to this item")
+    session_id: Optional[str] = None
+    wait: bool = False
+    allowed_domains: Optional[List[str]] = None
+    model: Optional[str] = None
+    structured_output_json: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    included_file_names: Optional[List[str]] = None
+    secrets: Optional[Dict[str, str]] = None
+    save_browser_data: Optional[bool] = None
+
+class BrowserTaskCreated(BaseModel):
+    task_id: str
+    session_id: str
+    live_url: Optional[str] = None
+
+class BrowserTaskResult(BaseModel):
+    id: str
+    session_id: Optional[str] = None
+    status: Optional[str] = None
+    is_success: Optional[bool] = None
+    done_output: Optional[Any] = None
+    live_url: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    steps: Optional[List[Dict[str, Any]]] = None
+
+    @field_validator("started_at", "finished_at", mode="before")
+    @classmethod
+    def convert_datetime_to_string(cls, v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return v
+
+class BrowserLogsUrl(BaseModel):
+    download_url: str
 
 class BrowserTaskResponse(BaseModel):
     task_id: str
@@ -71,3 +106,19 @@ class BrowserTaskResponse(BaseModel):
     status: Literal["started", "in_progress", "completed", "failed"]
     message: str
     result: Optional[Dict[str, Any]] = None
+
+# Orchestrator schemas
+class TaskAnalysisResponse(BaseModel):
+    """Response from task analysis"""
+    item_id: str
+    suitable: bool
+    confidence: float
+    task_type: str
+    reasoning: str
+    orchestration_started: bool = False
+
+class OrchestrationResponse(BaseModel):
+    """Response from orchestration trigger"""
+    message: str
+    item_id: str
+    orchestration_started: bool

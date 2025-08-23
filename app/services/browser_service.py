@@ -1,4 +1,3 @@
-# app/services/browser_service.py
 import os
 import re
 import json
@@ -6,14 +5,15 @@ import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
 
+import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-# SDK (pip install browser-use-sdk)
+# Optional SDK only for streaming; REST for everything else
 try:
     from browser_use_sdk import AsyncBrowserUse
-except Exception as e:
-    raise RuntimeError("browser-use-sdk is required. pip install browser-use-sdk") from e
+except Exception:
+    AsyncBrowserUse = None
 
 from ..schemas import LogCreate
 from ..services.logs_service import LogsService
@@ -22,6 +22,14 @@ from ..repositories.items_repository import ItemsRepository  # optional Supabase
 
 
 SYNC_SUPABASE_STATUS = os.getenv("SYNC_SUPABASE_STATUS", "true").lower() == "true"
+BROWSER_USE_API_KEY = os.getenv("BROWSER_USE_API_KEY") or ""
+
+API_BASES = [
+    # Try canonical first; fall back variants handle version differences
+    "https://api.browser-use.com/api/v1",
+    "https://api.browser-use.com/v1",
+    "https://api.browser-use.com",  # some deployments mount /tasks at the root
+]
 
 
 # -------------------- Pydantic IO models --------------------
@@ -74,15 +82,16 @@ class BrowserLogsUrl(BaseModel):
 
 class BrowserService:
     """
-    Runs Browser-Use Cloud tasks, streams updates into Convex logs,
-    and mirrors item live_url/status in Convex (and optionally Supabase).
+    Uses Browser-Use Cloud REST for create/run/retrieve (robust across SDK versions).
+    Uses SDK stream (when available) for step-by-step updates.
+    Mirrors live_url/status/done_output to Convex and emits raw update logs.
     """
 
     def __init__(self):
-        api_key = os.getenv("BROWSER_USE_API_KEY")
-        if not api_key:
+        if not BROWSER_USE_API_KEY:
             raise HTTPException(status_code=500, detail="Missing BROWSER_USE_API_KEY")
-        self.client = AsyncBrowserUse(api_key=api_key)
+        self.http = httpx.AsyncClient(timeout=60)
+        self.sdk = AsyncBrowserUse(api_key=BROWSER_USE_API_KEY) if AsyncBrowserUse else None
         self.logs = LogsService()
         self.convex = ConvexService()
         self.items_repo = ItemsRepository() if SYNC_SUPABASE_STATUS else None
@@ -97,62 +106,76 @@ class BrowserService:
           • stream logs and finalize with done_output on completion
         """
         try:
-            kwargs: Dict[str, Any] = {"task": payload.task}
+            # Build REST body; include both snake_case and camelCase for forward-compat.
+            request: Dict[str, Any] = {"task": payload.task}
 
+            # Attach to an existing session
             if payload.session_id:
-                kwargs["session_id"] = payload.session_id
+                request["sessionId"] = payload.session_id  # body expects camelCase in many deployments
+
+            # Agent / Browser settings
             if payload.model:
-                kwargs["agent_settings"] = {"model": payload.model}
+                request["agent_settings"] = {"model": payload.model}
+                request["agentSettings"] = {"model": payload.model}  # dual-form
 
             browser_settings: Dict[str, Any] = {}
             if payload.allowed_domains:
                 browser_settings["allowed_domains"] = payload.allowed_domains
+                browser_settings["allowedDomains"] = payload.allowed_domains
             if payload.save_browser_data is not None:
+                # a few variants exist: keepAlive / saveBrowserData
                 browser_settings["keep_alive"] = payload.save_browser_data
+                browser_settings["keepAlive"] = payload.save_browser_data
+                browser_settings["save_browser_data"] = payload.save_browser_data
+                browser_settings["saveBrowserData"] = payload.save_browser_data
             if browser_settings:
-                kwargs["browser_settings"] = browser_settings
+                request["browser_settings"] = browser_settings
+                request["browserSettings"] = browser_settings
 
+            # Structured output
             if payload.structured_output_json:
-                kwargs["structured_output_json"] = payload.structured_output_json
+                request["structured_output_json"] = payload.structured_output_json
+                request["structuredOutputJson"] = payload.structured_output_json
 
-            # carry item_id in metadata for traceability
+            # Metadata (carry item_id for traceability)
             if payload.metadata:
                 meta = dict(payload.metadata)
                 if payload.item_id:
                     meta.setdefault("item_id", payload.item_id)
-                kwargs["metadata"] = meta
+                request["metadata"] = meta
             elif payload.item_id:
-                kwargs["metadata"] = {"item_id": payload.item_id}
+                request["metadata"] = {"item_id": payload.item_id}
 
+            # Include files
             if payload.included_file_names:
-                kwargs["included_file_names"] = payload.included_file_names
+                request["included_file_names"] = payload.included_file_names
+                request["includedFileNames"] = payload.included_file_names
 
-            # Secrets: explicit > env-derived from <secret>... placeholders
+            # If you’re not using secrets now, skip. (Leave resolver to keep compatibility.)
             merged = self._resolve_secrets_from_task(payload.task)
             if payload.secrets:
                 merged.update(payload.secrets)
             if merged:
-                kwargs["secrets"] = merged
+                request["secrets"] = merged
 
-            # mark processing up front
+            # Mark processing up front
             if payload.item_id:
                 await self._set_status(payload.item_id, "processing")
 
+            headers = {"Authorization": f"Bearer {BROWSER_USE_API_KEY}"}
+
             if payload.wait:
-                view = await self.client.tasks.run(**kwargs)
+                # Synchronous run
+                view = await self._http_run_task(request, headers)
                 result = self._to_result(view)
 
-                # live_url mirror
                 if payload.item_id and result.live_url:
                     await self.convex.set_item_live_url(payload.item_id, result.live_url)
 
-                # emit steps and finalize
                 if payload.item_id:
                     await self._emit_full_view_to_logs(payload.item_id, result)
                     if result.is_success:
-                        await self._set_status(
-                            payload.item_id, "completed", context=None, done_output=result.done_output
-                        )
+                        await self._set_status(payload.item_id, "completed", context=None, done_output=result.done_output)
                     else:
                         await self._set_status(
                             payload.item_id,
@@ -162,46 +185,53 @@ class BrowserService:
                         )
                 return result
 
-            # async create + background stream
-            created = await self.client.tasks.create(**kwargs)
-            task_id = getattr(created, "id", None) or created["id"]
+            # Async create + background stream
+            created = await self._http_create_task(request, headers)
+            task_id = created.get("id") or created.get("taskId") or ""
             session_id = (
-                getattr(created, "session_id", None)
-                or getattr(created, "sessionId", None)
-                or created.get("sessionId")
+                created.get("sessionId")
+                or created.get("session_id")
+                or (created.get("session", {}) or {}).get("id")
+                or ""
             )
 
             live_url = None
             try:
-                view = await self.client.tasks.retrieve(task_id)
+                view = await self._http_retrieve_task(task_id, headers)
                 lu = self._session_live_url(view)
                 if payload.item_id and lu:
                     await self.convex.set_item_live_url(payload.item_id, lu)
                 live_url = lu
-            except Exception:
-                pass
+            except Exception as e:
+                await self._debug_log(payload.item_id, f"[browser] retrieve after create failed: {e}")
 
             if payload.item_id:
                 asyncio.create_task(self.stream_task_to_logs(task_id, payload.item_id))
 
             return BrowserTaskCreated(task_id=task_id, session_id=session_id, live_url=live_url)
 
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to run browser task: {str(e)}")
 
     async def get_task(self, task_id: str) -> BrowserTaskResult:
         try:
-            view = await self.client.tasks.retrieve(task_id)
+            headers = {"Authorization": f"Bearer {BROWSER_USE_API_KEY}"}
+            view = await self._http_retrieve_task(task_id, headers)
             return self._to_result(view)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get task: {str(e)}")
 
     async def get_task_logs(self, task_id: str) -> BrowserLogsUrl:
         try:
-            resp = await self.client.tasks.get_logs(task_id)
-            url = getattr(resp, "download_url", None) or getattr(resp, "downloadUrl", None) \
-                or (resp.get("download_url") if isinstance(resp, dict) else None) \
-                or (resp.get("downloadUrl") if isinstance(resp, dict) else None)
+            headers = {"Authorization": f"Bearer {BROWSER_USE_API_KEY}"}
+            data = await self._http_get_task_logs(task_id, headers)
+            url = (
+                data.get("download_url")
+                or data.get("downloadUrl")
+                or (data.get("logs", {}) or {}).get("downloadUrl")
+            )
             if not url:
                 raise RuntimeError("No download URL returned from Browser Use.")
             return BrowserLogsUrl(download_url=url)
@@ -222,64 +252,171 @@ class BrowserService:
                     LogCreate(item_id=item_id, message=msg, level=level, metadata=meta or {})
                 )
             except Exception:
-                # never crash the background task on log errors
                 pass
 
         try:
             await emit(f"[browser] stream started for task {task_id}", "debug", {"task_id": task_id})
 
-            async for update in self.client.tasks.stream(task_id):
-                # raw payload
-                raw_json = self._to_jsonable(update)
-                await emit("[browser] raw_update", "debug", {"task_id": task_id, "raw": raw_json})
+            # Prefer SDK stream if available; otherwise poll as a fallback
+            if self.sdk and hasattr(self.sdk, "tasks") and hasattr(self.sdk.tasks, "stream"):
+                async for update in self.sdk.tasks.stream(task_id):  # type: ignore[attr-defined]
+                    raw_json = self._to_jsonable(update)
+                    await emit("[browser] raw_update", "debug", {"task_id": task_id, "raw": raw_json})
 
-                # live_url (once)
-                if not live_url_set:
-                    lu = self._session_live_url(update) or None
-                    print("live_url", lu)
-                    if lu:
-                        await self.convex.set_item_live_url(item_id, lu)
-                        live_url_set = True
+                    if not live_url_set:
+                        lu = self._session_live_url(update) or None
+                        if lu:
+                            await self.convex.set_item_live_url(item_id, lu)
+                            live_url_set = True
 
-                # status
-                status = self._get(update, "status")
-                if status:
-                    await emit(f"[browser] status: {status}", "debug", {"task_id": task_id})
+                    status = self._get(update, "status")
+                    if status:
+                        await emit(f"[browser] status: {status}", "debug", {"task_id": task_id})
 
-                # new steps
-                steps = self._get(update, "steps", default=[]) or []
-                for s in steps:
-                    num = self._get(s, "number", default=0)
-                    if num <= last_step_no:
-                        continue
-                    await emit(self._fmt_step(s), "info", {"task_id": task_id, "step": self._to_jsonable(s)})
-                    last_step_no = max(last_step_no, num)
+                    steps = self._get(update, "steps", default=[]) or []
+                    for s in steps:
+                        num = self._get(s, "number", default=0)
+                        if num <= last_step_no:
+                            continue
+                        await emit(self._fmt_step(s), "info", {"task_id": task_id, "step": self._to_jsonable(s)})
+                        last_step_no = max(last_step_no, num)
 
-                # completion
-                if status in {"finished", "stopped", "failed", "error", "completed"}:
-                    done_output = self._get(update, "done_output") or self._get(update, "doneOutput")
-                    is_success = self._get(update, "is_success") or self._get(update, "isSuccess")
+                    if status in {"finished", "stopped", "failed", "error", "completed"}:
+                        done_output = self._get(update, "done_output") or self._get(update, "doneOutput")
+                        is_success = self._get(update, "is_success") or self._get(update, "isSuccess")
 
-                    await emit(
-                        "[browser] task finished",
-                        "info",
-                        {"task_id": task_id, "is_success": is_success, "done_output": self._to_jsonable(done_output)},
-                    )
-
-                    if is_success:
-                        await self._set_status(item_id, "completed", context=None, done_output=done_output)
-                    else:
-                        await self._set_status(
-                            item_id,
-                            "pending",
-                            context={"status": status},
-                            done_output=done_output,
+                        await emit(
+                            "[browser] task finished",
+                            "info",
+                            {"task_id": task_id, "is_success": is_success, "done_output": self._to_jsonable(done_output)},
                         )
-                    break
+
+                        if is_success:
+                            await self._set_status(item_id, "completed", context=None, done_output=done_output)
+                        else:
+                            await self._set_status(
+                                item_id,
+                                "pending",
+                                context={"status": status},
+                                done_output=done_output,
+                            )
+                        break
+            else:
+                # Poll every 2s as a fallback (no SDK)
+                headers = {"Authorization": f"Bearer {BROWSER_USE_API_KEY}"}
+                while True:
+                    update = await self._http_retrieve_task(task_id, headers)
+                    raw_json = self._to_jsonable(update)
+                    await emit("[browser] raw_update", "debug", {"task_id": task_id, "raw": raw_json})
+
+                    if not live_url_set:
+                        lu = self._session_live_url(update) or None
+                        if lu:
+                            await self.convex.set_item_live_url(item_id, lu)
+                            live_url_set = True
+
+                    status = self._get(update, "status")
+                    if status:
+                        await emit(f"[browser] status: {status}", "debug", {"task_id": task_id})
+
+                    steps = self._get(update, "steps", default=[]) or []
+                    for s in steps:
+                        num = self._get(s, "number", default=0)
+                        if num <= last_step_no:
+                            continue
+                        await emit(self._fmt_step(s), "info", {"task_id": task_id, "step": self._to_jsonable(s)})
+                        last_step_no = max(last_step_no, num)
+
+                    if status in {"finished", "stopped", "failed", "error", "completed"}:
+                        done_output = self._get(update, "done_output") or self._get(update, "doneOutput")
+                        is_success = self._get(update, "is_success") or self._get(update, "isSuccess")
+
+                        await emit(
+                            "[browser] task finished",
+                            "info",
+                            {"task_id": task_id, "is_success": is_success, "done_output": self._to_jsonable(done_output)},
+                        )
+
+                        if is_success:
+                            await self._set_status(item_id, "completed", context=None, done_output=done_output)
+                        else:
+                            await self._set_status(
+                                item_id,
+                                "pending",
+                                context={"status": status},
+                                done_output=done_output,
+                            )
+                        break
+
+                    await asyncio.sleep(2)
 
         except Exception as e:
             await emit(f"[browser] stream error: {str(e)}", "error", {"task_id": task_id})
             await self._set_status(item_id, "pending", context={"error": str(e)}, done_output=None)
+
+    # ---------- HTTP helpers ----------
+
+    async def _http_create_task(self, body: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        # Try common endpoints for "create task"
+        paths = ["/run-task", "/tasks/run", "/tasks", "/task", "/create-task"]
+        for base in API_BASES:
+            for path in paths:
+                url = f"{base}{path}"
+                try:
+                    r = await self.http.post(url, json=body, headers=headers)
+                    if r.status_code in (200, 201):
+                        return r.json()
+                except Exception:
+                    continue
+        raise RuntimeError("All create-task endpoints failed")
+
+    async def _http_run_task(self, body: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        # Try common endpoints for "run task synchronously"
+        paths = ["/run-task", "/tasks/run"]
+        for base in API_BASES:
+            for path in paths:
+                url = f"{base}{path}"
+                try:
+                    r = await self.http.post(url, json=body, headers=headers)
+                    if r.status_code in (200, 201):
+                        return r.json()
+                except Exception:
+                    continue
+        raise RuntimeError("All run-task endpoints failed")
+
+    async def _http_retrieve_task(self, task_id: str, headers: Dict[str, str]) -> Dict[str, Any]:
+        paths = [f"/tasks/{task_id}", f"/task/{task_id}"]
+        for base in API_BASES:
+            for path in paths:
+                url = f"{base}{path}"
+                try:
+                    r = await self.http.get(url, headers=headers)
+                    if r.status_code in (200, 201):
+                        return r.json()
+                except Exception:
+                    continue
+        raise RuntimeError("All retrieve-task endpoints failed")
+
+    async def _http_get_task_logs(self, task_id: str, headers: Dict[str, str]) -> Dict[str, Any]:
+        paths = [f"/tasks/{task_id}/logs", f"/task/{task_id}/logs"]
+        for base in API_BASES:
+            for path in paths:
+                url = f"{base}{path}"
+                try:
+                    r = await self.http.get(url, headers=headers)
+                    if r.status_code in (200, 201):
+                        return r.json()
+                except Exception:
+                    continue
+        raise RuntimeError("All get-task-logs endpoints failed")
+
+    async def _debug_log(self, item_id: Optional[str], message: str, meta: Optional[Dict[str, Any]] = None):
+        try:
+            await self.logs.add_log(
+                LogCreate(item_id=item_id or "n/a", message=message, level="debug", metadata=meta or {})
+            )
+        except Exception:
+            pass
 
     # ---------- Helpers ----------
 
@@ -290,10 +427,6 @@ class BrowserService:
         context: Optional[Dict[str, Any]] = None,
         done_output: Optional[Any] = None,
     ) -> None:
-        """
-        Mirror status to Convex (and best-effort to Supabase if enabled).
-        Accepts optional done_output so completion can atomically attach results.
-        """
         await self.convex.set_item_status(
             item_id=item_id,
             state=state,
@@ -304,19 +437,13 @@ class BrowserService:
             try:
                 await asyncio.to_thread(self.items_repo.update_item_state, item_id, state)
             except Exception:
-                # Best-effort mirror; never fail the stream on Supabase error
                 pass
 
     async def _emit_full_view_to_logs(self, item_id: str, result: BrowserTaskResult) -> None:
         steps = result.steps or []
         for s in steps:
             await self.logs.add_log(
-                LogCreate(
-                    item_id=item_id,
-                    message=self._fmt_step(s),
-                    level="info",
-                    metadata={"step": s},
-                )
+                LogCreate(item_id=item_id, message=self._fmt_step(s), level="info", metadata={"step": s})
             )
 
     def _to_result(self, view: Any) -> BrowserTaskResult:
@@ -357,10 +484,6 @@ class BrowserService:
         return self._get(session, "live_url") or self._get(session, "liveUrl")
 
     def _resolve_secrets_from_task(self, task_text: str) -> Dict[str, str]:
-        """
-        Extract <secret>keys</secret> from task and map to env without hardcoding domains:
-          KEY -> $KEY | $SECRET__KEY | $BROWSER_USE_SECRET__KEY
-        """
         keys = set(re.findall(r"<secret>([^<]+)</secret>", task_text or ""))
         out: Dict[str, str] = {}
         for key in keys:
@@ -373,11 +496,6 @@ class BrowserService:
         return out
 
     def _to_jsonable(self, obj: Any) -> Any:
-        """
-        Convert SDK update objects (Pydantic models) into JSON-safe dicts.
-        - Uses .model_dump(mode="json") when available (Pydantic v2).
-        - Falls back to plain dict / __dict__ / string as last resort.
-        """
         try:
             if hasattr(obj, "model_dump"):
                 return obj.model_dump(mode="json")  # type: ignore[attr-defined]
