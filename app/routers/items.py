@@ -1,17 +1,26 @@
 from typing import Optional, List
-from fastapi import APIRouter, UploadFile, File, Query, Depends
+from fastapi import APIRouter, UploadFile, File, Query, Depends, BackgroundTasks
 from ..services.items_service import ItemsService
 from ..dependencies import get_items_service
 from ..schemas import ItemCreate, Item, ItemUpdateState, ItemWithAttachments, Attachment
+from ..config import BASE_URL, ORCHESTRATOR_ENABLED
 
 router = APIRouter(prefix="/items", tags=["items"])
 
 @router.post("", response_model=Item)
-def create_item(
+async def create_item(
     payload: ItemCreate,
+    background_tasks: BackgroundTasks,
     items_service: ItemsService = Depends(get_items_service)
 ):
-    return items_service.create_item(payload)
+    # Create the item first
+    item = items_service.create_item(payload)
+    
+    # Trigger orchestrator analysis in background (if enabled)
+    if ORCHESTRATOR_ENABLED:
+        background_tasks.add_task(trigger_orchestrator_analysis, item.id)
+    
+    return item
 
 @router.get("", response_model=List[Item])
 def list_items(
@@ -44,3 +53,34 @@ async def add_attachment(
     items_service: ItemsService = Depends(get_items_service)
 ):
     return await items_service.add_attachment(item_id, file)
+
+
+# Background task functions
+async def trigger_orchestrator_analysis(item_id: str):
+    """Background task to analyze newly created items for AI suitability"""
+    import asyncio
+    import httpx
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Give the item creation transaction time to commit
+        await asyncio.sleep(0.5)
+        
+        # Call our own orchestrator endpoint
+        async with httpx.AsyncClient() as client:
+            response = await client.post(f"{BASE_URL}/orchestrator/analyze/{item_id}")
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result['orchestration_started']:
+                    logger.info(f"🤖 Orchestration started for new item {item_id} (task: {result['task_type']}, confidence: {result['confidence']:.0%})")
+                else:
+                    logger.debug(f"📝 New item {item_id} not suitable for AI processing: {result['reasoning']}")
+            else:
+                logger.warning(f"Failed to analyze new item {item_id}: {response.status_code}")
+                
+    except Exception as e:
+        logger.error(f"Error analyzing new item {item_id}: {e}")
+        # Don't raise - this shouldn't fail item creation
