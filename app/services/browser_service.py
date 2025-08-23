@@ -186,7 +186,6 @@ class BrowserService:
                 await self._set_status(payload.item_id, "processing")
             # Build task configuration
             task_config = self._build_task_config(payload)
-            print(f"[DEBUG] Task config: {json.dumps(task_config, indent=2)}")
             if payload.wait:
                 # Synchronous execution
                 print("[DEBUG] Running task synchronously...")
