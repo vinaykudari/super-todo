@@ -51,3 +51,16 @@ class Log(BaseModel):
 class LogsResponse(BaseModel):
     logs: List[Log]
     nextCursor: Optional[str] = None
+
+# Browser automation schemas
+class BrowserTaskRequest(BaseModel):
+    item_id: str
+    task: str = Field(..., description="Natural language description of the task to perform")
+    allowed_domains: Optional[List[str]] = Field(default=None, description="List of allowed domains for security")
+
+class BrowserTaskResponse(BaseModel):
+    task_id: str
+    item_id: str
+    status: Literal["started", "in_progress", "completed", "failed"]
+    message: str
+    result: Optional[Dict[str, Any]] = None
