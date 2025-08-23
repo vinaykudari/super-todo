@@ -5094,8 +5094,10 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "redis" },
+    { name = "requests" },
     { name = "supabase" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "vapi-server-sdk" },
     { name = "websockets" },
 ]
 
@@ -5114,8 +5116,10 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "redis", specifier = ">=5.0.0" },
+    { name = "requests", specifier = ">=2.31.0" },
     { name = "supabase", specifier = ">=2.0.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0" },
+    { name = "vapi-server-sdk", specifier = ">=0.1.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
 
@@ -5266,6 +5270,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/19/f5b78616566ea68edd42aacaf645adbf71fbd83fc52281fba555dc27e3f1/uvloop-0.21.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f3df876acd7ec037a3d005b3ab85a7e4110422e4d9c1571d4fc89b0fc41b6816", size = 4701068, upload-time = "2024-10-14T23:38:06.385Z" },
     { url = "https://files.pythonhosted.org/packages/47/57/66f061ee118f413cd22a656de622925097170b9380b30091b78ea0c6ea75/uvloop-0.21.0-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:bd53ecc9a0f3d87ab847503c2e1552b690362e005ab54e8a48ba97da3924c0dc", size = 4454428, upload-time = "2024-10-14T23:38:08.416Z" },
     { url = "https://files.pythonhosted.org/packages/63/9a/0962b05b308494e3202d3f794a6e85abe471fe3cafdbcf95c2e8c713aabd/uvloop-0.21.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:a5c39f217ab3c663dc699c04cbd50c13813e31d917642d459fdcec07555cc553", size = 4660018, upload-time = "2024-10-14T23:38:10.888Z" },
+]
+
+[[package]]
+name = "vapi-server-sdk"
+version = "1.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7a/3a/238c22d62c0540a06fee8f563c121dbbda766b9344cdd66c79cbfdc3251c/vapi_server_sdk-1.7.0.tar.gz", hash = "sha256:58a366b6f9336e816bd10f56b1b919d6947138ce8dbd7300057f8ac14ac30a1a", size = 328255, upload-time = "2025-07-03T01:15:10.123Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/5d/aa7d610be913f81e238d1875663554a0cf255249bbee8fa823d26580bc39/vapi_server_sdk-1.7.0-py3-none-any.whl", hash = "sha256:efd40027d70bc37b4d3495e3f65fabd0930e005a5960e3be757d8c75f8bd83ce", size = 950725, upload-time = "2025-07-03T01:15:09.044Z" },
 ]
 
 [[package]]

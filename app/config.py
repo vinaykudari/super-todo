@@ -19,5 +19,12 @@ SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "attachments")
 ORCHESTRATOR_ENABLED = os.getenv("ORCHESTRATOR_ENABLED", "true").lower() == "true"
 AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.6"))
 
+# VAPI Voice Agent configuration
+VAPI_TOKEN = os.getenv("VAPI_TOKEN")
+VAPI_ASSISTANT_ID = os.getenv("VAPI_ASSISTANT_ID", "ab2953ac-1a50-403a-af6e-710cfa8bec1f")
+VAPI_PHONE_NUMBER_ID = os.getenv("VAPI_PHONE_NUMBER_ID")
+VAPI_WEBHOOK_URL = os.getenv("VAPI_WEBHOOK_URL")
+VOICE_AGENT_ENABLED = os.getenv("VOICE_AGENT_ENABLED", "true").lower() == "true"
+
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

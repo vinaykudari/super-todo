@@ -9,6 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from .state import ReactiveState, ExecutionStatus, create_agent_message, add_message_to_state, update_agent_state
 from .agents.search import ReactiveSearchAgent
+from .agents.voice import VAPIVoiceAgent
 from .task_analyzer import TaskAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,8 @@ class OrchestratorSupervisor:
     def __init__(self):
         self.graph: CompiledStateGraph = self._build_graph()
         self.agents = {
-            "search_agent": ReactiveSearchAgent()
+            "search_agent": ReactiveSearchAgent(),
+            "voice_agent": VAPIVoiceAgent()  # ⭐ Add voice agent
         }
         self.task_analyzer = TaskAnalyzer()
         
@@ -86,17 +88,21 @@ class OrchestratorSupervisor:
         """Broadcast task to relevant agents"""
         logger.info(f"Broadcasting task to agents: {state['active_agents']}")
         
-        # For Phase 1, directly assign to search agent
-        search_agent = self.agents.get("search_agent")
-        if search_agent:
-            # Create request message
+        # Dynamic agent assignment based on active_agents list
+        for agent_id in state["active_agents"]:
+            agent = self.agents.get(agent_id)
+            if not agent:
+                logger.warning(f"Agent {agent_id} not found in available agents")
+                continue
+                
+            # Create request message for this agent
             request_message = create_agent_message(
                 from_agent="supervisor",
-                to_agent="search_agent",
+                to_agent=agent_id,
                 message_type="request",
                 content={
                     "query": state["original_request"],
-                    "task_type": "search",
+                    "task_type": state.get("task_analysis", {}).get("task_type", "unknown"),
                     "priority": "normal"
                 }
             )
@@ -106,19 +112,22 @@ class OrchestratorSupervisor:
             
             # Process message with agent
             try:
-                response = await search_agent.handle_message(request_message, state)
+                logger.info(f"Processing request with {agent_id}")
+                response = await agent.handle_message(request_message, state)
                 add_message_to_state(state, response)
                 
                 # Update agent state
-                update_agent_state(state, "search_agent", {
+                update_agent_state(state, agent_id, {
                     "status": "processing",
                     "started_at": datetime.now()
                 })
                 
+                logger.info(f"Successfully processed request with {agent_id}")
+                
             except Exception as e:
-                logger.error(f"Error processing with search agent: {e}")
+                logger.error(f"Error processing with {agent_id}: {e}")
                 state["errors"].append({
-                    "agent_id": "search_agent",
+                    "agent_id": agent_id,
                     "error": str(e),
                     "timestamp": datetime.now()
                 })

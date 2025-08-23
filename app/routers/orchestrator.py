@@ -42,7 +42,7 @@ async def analyze_task(
     
     try:
         # Get the item
-        item = items_service.get_item_with_attachments(item_id)
+        item = await items_service.get_item_with_attachments(item_id)
         
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
@@ -69,7 +69,7 @@ async def analyze_task(
         # If suitable for AI processing, start orchestration
         if analysis['suitable'] and analysis['confidence'] > AI_CONFIDENCE_THRESHOLD:
             # Update item status to processing
-            items_service.update_item_state(item_id, ItemUpdateState(state="processing"))
+            await items_service.update_item_state(item_id, ItemUpdateState(state="processing"))
             
             # Start orchestration in background
             background_tasks.add_task(
@@ -137,7 +137,7 @@ async def batch_analyze_pending_tasks(
                 # Start orchestration if suitable
                 if analysis['suitable'] and analysis['confidence'] > AI_CONFIDENCE_THRESHOLD:
                     # Update to processing
-                    items_service.update_item_state(item.id, ItemUpdateState(state="processing"))
+                    await items_service.update_item_state(item.id, ItemUpdateState(state="processing"))
                     
                     # Start orchestration
                     background_tasks.add_task(
@@ -189,7 +189,7 @@ async def get_orchestration_status(
     """Get orchestration status for an item"""
     
     try:
-        item = items_service.get_item_with_attachments(item_id)
+        item = await items_service.get_item_with_attachments(item_id)
         
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
@@ -239,10 +239,10 @@ async def run_orchestration(
             summary = create_result_summary(search_results, aggregated, task_analysis)
             
             # Update item status to completed
-            items_service.update_item_state(item_id, ItemUpdateState(state="completed"))
+            await items_service.update_item_state(item_id, ItemUpdateState(state="completed"))
             
             # Store orchestration result in item description
-            current_item = items_service.get_item_with_attachments(item_id)
+            current_item = await items_service.get_item_with_attachments(item_id)
             updated_description = f"{current_item.description or ''}\n\n**AI Task Result:**\n{summary}"
             
             logger.info(f"Orchestration completed successfully for item {item_id}")
@@ -253,14 +253,14 @@ async def run_orchestration(
             logger.error(f"Orchestration failed for item {item_id}: {error_summary}")
             
             # Reset item status to pending (so it can be retried)
-            items_service.update_item_state(item_id, ItemUpdateState(state="pending"))
+            await items_service.update_item_state(item_id, ItemUpdateState(state="pending"))
             
     except Exception as e:
         logger.error(f"Background orchestration failed: {e}")
         
         # Reset item status
         try:
-            items_service.update_item_state(item_id, ItemUpdateState(state="pending"))
+            await items_service.update_item_state(item_id, ItemUpdateState(state="pending"))
         except:
             pass  # Don't fail on cleanup
 

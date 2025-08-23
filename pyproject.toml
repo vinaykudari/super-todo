@@ -21,6 +21,8 @@ dependencies = [
     "browser-use-sdk>=1.0.2",
     "redis>=5.0.0",
     "langgraph>=0.6.6",
+    "requests>=2.31.0",
+    "vapi-server-sdk>=0.1.0",
 ]
 
 [build-system]
