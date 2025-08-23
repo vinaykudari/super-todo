@@ -160,16 +160,13 @@ class BrowserService:
             browser_settings["allowed_domains"] = payload.allowed_domains
         if payload.save_browser_data is not None:
             browser_settings["keep_alive"] = payload.save_browser_data
-        
         # Add mobile-compatible viewport settings for better live video experience
         # Use Browser Use API parameters as documented at:
         # https://docs.browser-use.com/api-reference/browser-profiles/create-browser-profile
-        
-        # Set default mobile viewport for better live video experience
-        default_viewport_width = BROWSER_DEFAULT_VIEWPORT_WIDTH
-        default_viewport_height = BROWSER_DEFAULT_VIEWPORT_HEIGHT
-        default_is_mobile = BROWSER_MOBILE_BY_DEFAULT
-        
+        # Set default mobile viewport for better live video experience (hardcoded for mobile portrait)
+        default_viewport_width = 375  # Mobile width (portrait)
+        default_viewport_height = 812  # Mobile height (portrait)
+        default_is_mobile = True  # Enable mobile emulation
         # Use custom viewport settings if provided, otherwise use mobile defaults
         if payload.viewport_settings:
             browser_viewport_width = payload.viewport_settings.get("width", default_viewport_width)
@@ -179,12 +176,10 @@ class BrowserService:
             browser_viewport_width = default_viewport_width
             browser_viewport_height = default_viewport_height
             is_mobile = default_is_mobile
-            
         # Set Browser Use API compatible viewport parameters
         browser_settings["browserViewportWidth"] = browser_viewport_width
         browser_settings["browserViewportHeight"] = browser_viewport_height
         browser_settings["isMobile"] = is_mobile
-        
         if browser_settings:
             config["browser_settings"] = browser_settings
         # Output format
@@ -346,7 +341,7 @@ class BrowserService:
                     if live_url:
                         await self.convex.set_item_live_url(item_id, live_url)
                         live_url_set = True
-                        await emit(f"[browser] live_url set: {live_url}", "debug", {"task_id": task_id})
+                    await emit(f"[browser] live_url set: {live_url}", "debug", {"task_id": task_id})
                 # Get status
                 status = getattr(update, 'status', None) or (update.get('status') if isinstance(update, dict) else None)
                 if status:
