@@ -19,7 +19,8 @@ dependencies = [
     "langchain>=0.1.0",
     "langchain-openai>=0.1.0",
     "browser-use-sdk>=1.0.2",
-    "redis>=5.0.0"
+    "redis>=5.0.0",
+    "langgraph>=0.6.6",
 ]
 
 [build-system]
