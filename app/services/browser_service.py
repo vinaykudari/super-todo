@@ -42,6 +42,7 @@ class BrowserTaskCreated(BaseModel):
     task_id: str
     session_id: str
     live_url: Optional[str] = None
+    viewport: Optional[Dict[str, int]] = Field(None, description="Viewport dimensions used (width, height)")
 class BrowserTaskResult(BaseModel):
     id: str
     session_id: Optional[str] = None
@@ -53,6 +54,7 @@ class BrowserTaskResult(BaseModel):
     finished_at: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     steps: Optional[List[Dict[str, Any]]] = None
+    viewport: Optional[Dict[str, int]] = Field(None, description="Viewport dimensions used (width, height)")
     @field_validator("started_at", "finished_at", mode="before")
     @classmethod
     def convert_datetime_to_string(cls, v):
@@ -167,19 +169,31 @@ class BrowserService:
         default_viewport_width = 375  # Mobile width (portrait)
         default_viewport_height = 812  # Mobile height (portrait)
         default_is_mobile = True  # Enable mobile emulation
+        default_device_scale_factor = 2.0  # Common for mobile devices
+        default_has_touch = True  # Enable touch events for mobile
         # Use custom viewport settings if provided, otherwise use mobile defaults
         if payload.viewport_settings:
             browser_viewport_width = payload.viewport_settings.get("width", default_viewport_width)
             browser_viewport_height = payload.viewport_settings.get("height", default_viewport_height)
             is_mobile = payload.viewport_settings.get("is_mobile", default_is_mobile)
+            device_scale_factor = payload.viewport_settings.get("device_scale_factor", default_device_scale_factor)
+            has_touch = payload.viewport_settings.get("has_touch", default_has_touch)
         else:
             browser_viewport_width = default_viewport_width
             browser_viewport_height = default_viewport_height
             is_mobile = default_is_mobile
+            device_scale_factor = default_device_scale_factor
+            has_touch = default_has_touch
         # Set Browser Use API compatible viewport parameters
         browser_settings["browserViewportWidth"] = browser_viewport_width
         browser_settings["browserViewportHeight"] = browser_viewport_height
         browser_settings["isMobile"] = is_mobile
+        # Add additional CDP-like parameters; these may or may not be supported by the SDK, but worth trying for better mobile emulation
+        browser_settings["deviceScaleFactor"] = device_scale_factor
+        browser_settings["hasTouch"] = has_touch
+        # Explicitly set isLandscape to False for portrait
+        browser_settings["isLandscape"] = False if browser_viewport_height > browser_viewport_width else True
+
         if browser_settings:
             config["browser_settings"] = browser_settings
         # Output format
@@ -202,7 +216,8 @@ class BrowserService:
             merged_secrets.update(payload.secrets)
         if merged_secrets:
             config["secrets"] = merged_secrets
-        return config
+        # Return config and viewport info for response
+        return config, {"width": int(browser_viewport_width), "height": int(browser_viewport_height)}
     async def run_task(self, payload: BrowserTaskRequest) -> Union[BrowserTaskCreated, BrowserTaskResult]:
         """
         Start a Browser-Use task using the SDK.
@@ -212,13 +227,14 @@ class BrowserService:
             if payload.item_id:
                 await self._set_status(payload.item_id, "processing")
             # Build task configuration
-            task_config = self._build_task_config(payload)
+            task_config, viewport = self._build_task_config(payload)
             if payload.wait:
                 # Synchronous execution
                 print("[DEBUG] Running task synchronously...")
                 result = await self.sdk.tasks.run(**task_config)
                 print(f"[DEBUG] Sync task result: {result}")
                 browser_result = self._sdk_result_to_browser_result(result)
+                browser_result.viewport = viewport
                 # Update live URL if available
                 if payload.item_id and browser_result.live_url:
                     await self.convex.set_item_live_url(payload.item_id, browser_result.live_url)
@@ -286,7 +302,8 @@ class BrowserService:
                 return BrowserTaskCreated(
                     task_id=task_id,
                     session_id=session_id or "",
-                    live_url=live_url
+                    live_url=live_url,
+                    viewport=viewport
                 )
         except Exception as e:
             print(f"[DEBUG] Run task failed: {e}")
@@ -297,7 +314,9 @@ class BrowserService:
         """Get task details by ID"""
         try:
             task = await self.sdk.tasks.get(task_id)
-            return self._sdk_result_to_browser_result(task)
+            result = self._sdk_result_to_browser_result(task)
+            # Note: Viewport not available here; if needed, store in metadata or Convex
+            return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get task: {str(e)}")
     async def get_task_logs(self, task_id: str) -> BrowserLogsUrl:
