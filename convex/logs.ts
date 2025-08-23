@@ -26,26 +26,38 @@ export const getLogsByItemId = query({
   args: {
     item_id: v.string(),
     limit: v.optional(v.number()),
-    cursor: v.optional(v.string()),
+    cursor: v.optional(v.string()),      // stringified millis
+    direction: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 50;
-    
-    let query = ctx.db
+    const dir = args.direction ?? "desc";
+    const c = args.cursor ? parseInt(args.cursor, 10) : undefined;
+
+    let q = ctx.db
       .query("logs")
-      .withIndex("by_item_and_timestamp", (q) => q.eq("item_id", args.item_id))
-      .order("desc");
+      .withIndex("by_item_and_timestamp", (x) => x.eq("item_id", args.item_id));
 
-    if (args.cursor) {
-      query = query.filter((q) => q.lt(q.field("timestamp"), parseInt(args.cursor)));
+    if (dir === "desc") {
+      q = q.order("desc");
+      if (c !== undefined) q = q.filter((x) => x.lt(x.field("timestamp"), c));
+      const logs = await q.take(limit);
+      return {
+        logs,
+        nextCursor:
+          logs.length === limit ? String(logs[logs.length - 1].timestamp) : null,
+      };
+    } else {
+      // asc
+      q = q.order("asc");
+      if (c !== undefined) q = q.filter((x) => x.gt(x.field("timestamp"), c));
+      const logs = await q.take(limit);
+      return {
+        logs,
+        nextCursor:
+          logs.length === limit ? String(logs[logs.length - 1].timestamp) : null,
+      };
     }
-
-    const logs = await query.take(limit);
-    
-    return {
-      logs,
-      nextCursor: logs.length === limit ? logs[logs.length - 1].timestamp.toString() : null,
-    };
   },
 });
 

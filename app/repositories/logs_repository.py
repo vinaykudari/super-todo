@@ -10,9 +10,19 @@ class LogsRepository:
         """Add a log entry for an item."""
         return await self.convex_service.add_log(item_id, message, level, metadata)
 
-    async def get_logs_by_item_id(self, item_id: str, limit: int = 50, cursor: Optional[str] = None) -> Dict[str, Any]:
-        """Get logs for a specific item with pagination."""
-        return await self.convex_service.get_logs_by_item_id(item_id, limit, cursor)
+    async def get_logs_by_item_id(
+        self,
+        item_id: str,
+        limit: int = 50,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get logs for a specific item with pagination (DESC order)."""
+        return await self.convex_service.get_logs_by_item_id(
+            item_id=item_id,
+            limit=limit,
+            cursor=cursor,
+            direction="desc",
+        )
 
     async def get_recent_logs(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get recent logs across all items."""

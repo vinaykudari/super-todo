@@ -15,11 +15,14 @@ class Item(BaseModel):
     title: str
     description: Optional[str]
     state: ItemState
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     ai_request: Optional[str] = None
     orchestration_status: OrchestrationStatus = "pending"
     orchestration_result: Optional[Dict[str, Any]] = None
+    live_url: Optional[str] = None
+    screenshot_url: Optional[str] = None
+    done_output: Optional[str] = None
 
 class ItemUpdateState(BaseModel):
     state: ItemState

@@ -1,6 +1,13 @@
 from functools import lru_cache
 from .services.items_service import ItemsService
 from .services.logs_service import LogsService
+from .services.browser_service import BrowserService
+
+
+@lru_cache()
+def get_browser_service() -> BrowserService:
+    """Dependency injection for BrowserService."""
+    return BrowserService()
 
 
 @lru_cache()

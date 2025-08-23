@@ -1,65 +1,43 @@
+# app/services/browser_service.py
 import os
 import re
+import json
 import asyncio
-from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
+from typing import Optional, Dict, Any, List, Union
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-
-from browser_use_sdk import AsyncBrowserUse
+# SDK (pip install browser-use-sdk)
+try:
+    from browser_use_sdk import AsyncBrowserUse
+except Exception as e:
+    raise RuntimeError("browser-use-sdk is required. pip install browser-use-sdk") from e
 
 from ..schemas import LogCreate
 from ..services.logs_service import LogsService
+from ..convex_client import ConvexService
+from ..repositories.items_repository import ItemsRepository  # optional Supabase status sync
 
 
-# -------------------- IO MODELS --------------------
+SYNC_SUPABASE_STATUS = os.getenv("SYNC_SUPABASE_STATUS", "true").lower() == "true"
+
+
+# -------------------- Pydantic IO models --------------------
 
 class BrowserTaskRequest(BaseModel):
-    """
-    Natural-language Browser-Use task.
-
-    Use <secret>placeholders</secret> in `task`; we'll fill from:
-      1) `secrets` dict provided here (wins),
-      2) environment variables derived from the placeholder (no hardcoding).
-
-    Example:
-      task="Return my sunscreen from Amazon. Login with <secret>amazon_email</secret> and <secret>amazon_password</secret>."
-    """
-    task: str = Field(..., description="Natural-language task for the agent")
-    item_id: Optional[str] = Field(
-        default=None, description="If provided, we stream step logs to this item via LogsService"
-    )
-    session_id: Optional[str] = Field(
-        default=None, description="Continue in existing session"
-    )
-    wait: bool = Field(
-        default=False, description="Wait until completion and return final output"
-    )
-    allowed_domains: Optional[List[str]] = Field(
-        default=None, description="Domain sandboxing, e.g. ['https://*.amazon.com']"
-    )
-    model: Optional[str] = Field(
-        default=None, description="LLM model override (Cloud default if omitted)"
-    )
-    structured_output_json: Optional[Dict[str, Any]] = Field(
-        default=None, description="JSON schema for structured output"
-    )
-    metadata: Optional[Dict[str, Any]] = Field(
-        default=None, description="Arbitrary metadata; we pass through to Cloud"
-    )
-    included_file_names: Optional[List[str]] = Field(
-        default=None, description="File names previously uploaded via presigned URL"
-    )
-    secrets: Optional[Dict[str, str]] = Field(
-        default=None,
-        description="Key/value secrets referenced in the task with <secret>key</secret>",
-    )
-    save_browser_data: Optional[bool] = Field(
-        default=None,
-        description="Hints to keep session/browser alive longer (Cloud heuristic)",
-    )
+    task: str = Field(..., description="Natural-language instruction")
+    item_id: Optional[str] = Field(None, description="If set, logs + status updates tie to this item")
+    session_id: Optional[str] = None
+    wait: bool = False
+    allowed_domains: Optional[List[str]] = None
+    model: Optional[str] = None
+    structured_output_json: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    included_file_names: Optional[List[str]] = None
+    secrets: Optional[Dict[str, str]] = None
+    save_browser_data: Optional[bool] = None
 
 
 class BrowserTaskCreated(BaseModel):
@@ -80,40 +58,11 @@ class BrowserTaskResult(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     steps: Optional[List[Dict[str, Any]]] = None
 
-    @field_validator('started_at', 'finished_at', mode='before')
+    @field_validator("started_at", "finished_at", mode="before")
     @classmethod
     def convert_datetime_to_string(cls, v):
         if isinstance(v, datetime):
             return v.isoformat()
-        return v
-
-    @field_validator('steps', mode='before')
-    @classmethod
-    def convert_steps_to_dict(cls, v):
-        if v is None:
-            return v
-        if isinstance(v, list):
-            result = []
-            for step in v:
-                if hasattr(step, '__dict__'):
-                    # Convert object to dict using __dict__ directly to avoid FieldInfo
-                    step_dict = {}
-                    obj_dict = step.__dict__
-                    for attr_name, attr_value in obj_dict.items():
-                        if not attr_name.startswith('_') and not callable(attr_value):
-                            # Skip Pydantic FieldInfo objects and other non-serializable types
-                            if not str(type(attr_value)).startswith("<class 'pydantic"):
-                                step_dict[attr_name] = attr_value
-                    result.append(step_dict)
-                elif isinstance(step, dict):
-                    result.append(step)
-                else:
-                    # Try to convert to dict if possible
-                    try:
-                        result.append(dict(step))
-                    except Exception:
-                        result.append({"raw": str(step)})
-            return result
         return v
 
 
@@ -121,34 +70,37 @@ class BrowserLogsUrl(BaseModel):
     download_url: str
 
 
-# -------------------- SERVICE --------------------
+# -------------------- Service --------------------
 
 class BrowserService:
+    """
+    Runs Browser-Use Cloud tasks, streams updates into Convex logs,
+    and mirrors item live_url/status in Convex (and optionally Supabase).
+    """
+
     def __init__(self):
         api_key = os.getenv("BROWSER_USE_API_KEY")
         if not api_key:
             raise HTTPException(status_code=500, detail="Missing BROWSER_USE_API_KEY")
         self.client = AsyncBrowserUse(api_key=api_key)
+        self.logs = LogsService()
+        self.convex = ConvexService()
+        self.items_repo = ItemsRepository() if SYNC_SUPABASE_STATUS else None
 
-    # ---- Public API ----
+    # ---------- Public API ----------
 
-    async def run_task(
-        self,
-        payload: BrowserTaskRequest,
-    ) -> Union[BrowserTaskCreated, BrowserTaskResult]:
+    async def run_task(self, payload: BrowserTaskRequest) -> Union[BrowserTaskCreated, BrowserTaskResult]:
         """
-        Create or run a Browser Use task. If `wait=True` returns final result,
-        else returns task + session IDs immediately. Optionally starts a log
-        monitor for `item_id`.
+        Start a Browser-Use task. When item_id is provided:
+          • set state=processing
+          • mirror live_url when available
+          • stream logs and finalize with done_output on completion
         """
         try:
-            kwargs: Dict[str, Any] = {
-                "task": payload.task,
-            }
+            kwargs: Dict[str, Any] = {"task": payload.task}
 
             if payload.session_id:
                 kwargs["session_id"] = payload.session_id
-
             if payload.model:
                 kwargs["agent_settings"] = {"model": payload.model}
 
@@ -156,33 +108,61 @@ class BrowserService:
             if payload.allowed_domains:
                 browser_settings["allowed_domains"] = payload.allowed_domains
             if payload.save_browser_data is not None:
-                # Cloud doesn't expose a perfect knob; this nudges persistence.
                 browser_settings["keep_alive"] = payload.save_browser_data
             if browser_settings:
                 kwargs["browser_settings"] = browser_settings
 
             if payload.structured_output_json:
                 kwargs["structured_output_json"] = payload.structured_output_json
+
+            # carry item_id in metadata for traceability
             if payload.metadata:
-                kwargs["metadata"] = payload.metadata
+                meta = dict(payload.metadata)
+                if payload.item_id:
+                    meta.setdefault("item_id", payload.item_id)
+                kwargs["metadata"] = meta
+            elif payload.item_id:
+                kwargs["metadata"] = {"item_id": payload.item_id}
+
             if payload.included_file_names:
                 kwargs["included_file_names"] = payload.included_file_names
 
-            # Merge secrets: explicit > derived from <secret>... placeholders
-            merged_secrets = dict(self._resolve_secrets_from_task(payload.task))
+            # Secrets: explicit > env-derived from <secret>... placeholders
+            merged = self._resolve_secrets_from_task(payload.task)
             if payload.secrets:
-                merged_secrets.update(payload.secrets)
-            if merged_secrets:
-                kwargs["secrets"] = merged_secrets
+                merged.update(payload.secrets)
+            if merged:
+                kwargs["secrets"] = merged
+
+            # mark processing up front
+            if payload.item_id:
+                await self._set_status(payload.item_id, "processing")
 
             if payload.wait:
                 view = await self.client.tasks.run(**kwargs)
                 result = self._to_result(view)
-                # If item_id provided, backfill all steps to logs once:
+
+                # live_url mirror
+                if payload.item_id and result.live_url:
+                    await self.convex.set_item_live_url(payload.item_id, result.live_url)
+
+                # emit steps and finalize
                 if payload.item_id:
                     await self._emit_full_view_to_logs(payload.item_id, result)
+                    if result.is_success:
+                        await self._set_status(
+                            payload.item_id, "completed", context=None, done_output=result.done_output
+                        )
+                    else:
+                        await self._set_status(
+                            payload.item_id,
+                            "pending",
+                            context={"status": result.status},
+                            done_output=result.done_output,
+                        )
                 return result
 
+            # async create + background stream
             created = await self.client.tasks.create(**kwargs)
             task_id = getattr(created, "id", None) or created["id"]
             session_id = (
@@ -194,24 +174,18 @@ class BrowserService:
             live_url = None
             try:
                 view = await self.client.tasks.retrieve(task_id)
-                live_url = self._session_live_url(view)
+                lu = self._session_live_url(view)
+                if payload.item_id and lu:
+                    await self.convex.set_item_live_url(payload.item_id, lu)
+                live_url = lu
             except Exception:
                 pass
 
-            # Start background monitor if item_id provided
             if payload.item_id:
-                asyncio.create_task(
-                    self.monitor_task_to_logs(
-                        task_id=task_id,
-                        item_id=payload.item_id,
-                        poll_interval=1.2,
-                    )
-                )
+                asyncio.create_task(self.stream_task_to_logs(task_id, payload.item_id))
 
             return BrowserTaskCreated(task_id=task_id, session_id=session_id, live_url=live_url)
 
-        except HTTPException:
-            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to run browser task: {str(e)}")
 
@@ -225,153 +199,209 @@ class BrowserService:
     async def get_task_logs(self, task_id: str) -> BrowserLogsUrl:
         try:
             resp = await self.client.tasks.get_logs(task_id)
-            download_url = getattr(resp, "download_url", None) or getattr(resp, "downloadUrl", None) \
-                or (resp.get("download_url") or resp.get("downloadUrl"))
-            if not download_url:
+            url = getattr(resp, "download_url", None) or getattr(resp, "downloadUrl", None) \
+                or (resp.get("download_url") if isinstance(resp, dict) else None) \
+                or (resp.get("downloadUrl") if isinstance(resp, dict) else None)
+            if not url:
                 raise RuntimeError("No download URL returned from Browser Use.")
-            return BrowserLogsUrl(download_url=download_url)
+            return BrowserLogsUrl(download_url=url)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get task logs: {str(e)}")
 
-    # ---- Log Streaming (polling monitor) ----
-
-    async def monitor_task_to_logs(
-        self,
-        task_id: str,
-        item_id: str,
-        poll_interval: float = 1.0,
-        timeout_seconds: int = 15 * 60,
-        logs_service: Optional[LogsService] = None,
-    ) -> None:
+    async def stream_task_to_logs(self, task_id: str, item_id: str) -> None:
         """
-        Polls `Get Task` and emits new steps / status transitions to LogsService under `item_id`.
-        This pairs with your existing /logs/stream/{item_id} endpoint for real-time UI.
+        Subscribe to Browser-Use updates -> emit raw + pretty logs,
+        mirror live_url once, and finalize status with done_output.
         """
-        svc = logs_service or LogsService()
-        last_step_count = 0
-        last_status = None
+        last_step_no = 0
+        live_url_set = False
 
-        async def emit(message: str, level: str = "info", metadata: Optional[Dict[str, Any]] = None):
-            await svc.add_log(LogCreate(item_id=item_id, message=message, level=level, metadata=metadata or {}))
+        async def emit(msg: str, level: str = "info", meta: Optional[Dict[str, Any]] = None):
+            try:
+                await self.logs.add_log(
+                    LogCreate(item_id=item_id, message=msg, level=level, metadata=meta or {})
+                )
+            except Exception:
+                # never crash the background task on log errors
+                pass
 
         try:
-            await emit(f"[browser] monitor started for task {task_id}", "debug", {"task_id": task_id})
+            await emit(f"[browser] stream started for task {task_id}", "debug", {"task_id": task_id})
 
-            # First snapshot
-            view = await self.client.tasks.retrieve(task_id)
-            cur = self._to_result(view)
-            last_status = cur.status
-            if cur.status:
-                await emit(f"[browser] status: {cur.status}", "debug")
+            async for update in self.client.tasks.stream(task_id):
+                # raw payload
+                raw_json = self._to_jsonable(update)
+                await emit("[browser] raw_update", "debug", {"task_id": task_id, "raw": raw_json})
 
-            if cur.steps:
-                last_step_count = len(cur.steps)
-                # Emit already-available steps once
-                for s in cur.steps:
-                    await emit(self._fmt_step(s), "info", {"task_id": task_id, "step": s})
+                # live_url (once)
+                if not live_url_set:
+                    lu = self._session_live_url(update) or None
+                    print("live_url", lu)
+                    if lu:
+                        await self.convex.set_item_live_url(item_id, lu)
+                        live_url_set = True
 
-            # Loop
-            deadline = asyncio.get_event_loop().time() + timeout_seconds
-            while asyncio.get_event_loop().time() < deadline:
-                await asyncio.sleep(poll_interval)
-                view = await self.client.tasks.retrieve(task_id)
-                cur = self._to_result(view)
+                # status
+                status = self._get(update, "status")
+                if status:
+                    await emit(f"[browser] status: {status}", "debug", {"task_id": task_id})
 
-                # New status?
-                if cur.status and cur.status != last_status:
-                    await emit(f"[browser] status: {cur.status}", "debug", {"task_id": task_id})
-                    last_status = cur.status
+                # new steps
+                steps = self._get(update, "steps", default=[]) or []
+                for s in steps:
+                    num = self._get(s, "number", default=0)
+                    if num <= last_step_no:
+                        continue
+                    await emit(self._fmt_step(s), "info", {"task_id": task_id, "step": self._to_jsonable(s)})
+                    last_step_no = max(last_step_no, num)
 
-                # New steps?
-                steps = cur.steps or []
-                if len(steps) > last_step_count:
-                    for s in steps[last_step_count:]:
-                        await emit(self._fmt_step(s), "info", {"task_id": task_id, "step": s})
-                    last_step_count = len(steps)
+                # completion
+                if status in {"finished", "stopped", "failed", "error", "completed"}:
+                    done_output = self._get(update, "done_output") or self._get(update, "doneOutput")
+                    is_success = self._get(update, "is_success") or self._get(update, "isSuccess")
 
-                # Done?
-                if cur.status in {"finished", "stopped", "failed", "error", "completed"}:
                     await emit(
                         "[browser] task finished",
                         "info",
-                        {"task_id": task_id, "is_success": cur.is_success, "done_output": cur.done_output},
+                        {"task_id": task_id, "is_success": is_success, "done_output": self._to_jsonable(done_output)},
                     )
+
+                    if is_success:
+                        await self._set_status(item_id, "completed", context=None, done_output=done_output)
+                    else:
+                        await self._set_status(
+                            item_id,
+                            "pending",
+                            context={"status": status},
+                            done_output=done_output,
+                        )
                     break
 
-            else:
-                await emit("[browser] monitor timeout reached; stopping monitor", "warning", {"task_id": task_id})
-
         except Exception as e:
-            # Best-effort error log, never crash server
+            await emit(f"[browser] stream error: {str(e)}", "error", {"task_id": task_id})
+            await self._set_status(item_id, "pending", context={"error": str(e)}, done_output=None)
+
+    # ---------- Helpers ----------
+
+    async def _set_status(
+        self,
+        item_id: str,
+        state: str,
+        context: Optional[Dict[str, Any]] = None,
+        done_output: Optional[Any] = None,
+    ) -> None:
+        """
+        Mirror status to Convex (and best-effort to Supabase if enabled).
+        Accepts optional done_output so completion can atomically attach results.
+        """
+        await self.convex.set_item_status(
+            item_id=item_id,
+            state=state,
+            context=context,
+            done_output=done_output,
+        )
+        if SYNC_SUPABASE_STATUS and self.items_repo is not None:
             try:
-                await emit(f"[browser] monitor error: {str(e)}", "error", {"task_id": task_id})
+                await asyncio.to_thread(self.items_repo.update_item_state, item_id, state)
             except Exception:
+                # Best-effort mirror; never fail the stream on Supabase error
                 pass
 
-    # ---- Helpers ----
+    async def _emit_full_view_to_logs(self, item_id: str, result: BrowserTaskResult) -> None:
+        steps = result.steps or []
+        for s in steps:
+            await self.logs.add_log(
+                LogCreate(
+                    item_id=item_id,
+                    message=self._fmt_step(s),
+                    level="info",
+                    metadata={"step": s},
+                )
+            )
 
     def _to_result(self, view: Any) -> BrowserTaskResult:
-        def g(obj: Any, *names: str, default=None):
-            for n in names:
-                if hasattr(obj, n):
-                    return getattr(obj, n)
-                if isinstance(obj, dict) and n in obj:
-                    return obj[n]
-            return default
+        # timestamps
+        started_at = self._get(view, "started_at") or self._get(view, "startedAt")
+        if hasattr(started_at, "isoformat"):
+            started_at = started_at.isoformat()
+        elif started_at is not None:
+            started_at = str(started_at)
 
-        session = g(view, "session", default=None) or {}
-        live_url = self._session_live_url(view)
+        finished_at = self._get(view, "finished_at") or self._get(view, "finishedAt")
+        if hasattr(finished_at, "isoformat"):
+            finished_at = finished_at.isoformat()
+        elif finished_at is not None:
+            finished_at = str(finished_at)
+
+        # steps -> JSONable dicts
+        steps_raw = self._get(view, "steps", default=[]) or []
+        steps: List[Dict[str, Any]] = [self._to_jsonable(s) for s in steps_raw]
 
         return BrowserTaskResult(
-            id=g(view, "id"),
-            session_id=g(view, "session_id", "sessionId"),
-            status=g(view, "status"),
-            is_success=g(view, "is_success", "isSuccess"),
-            done_output=g(view, "done_output", "doneOutput"),
-            live_url=live_url,
-            started_at=g(view, "started_at", "startedAt"),
-            finished_at=g(view, "finished_at", "finishedAt"),
-            metadata=g(view, "metadata", default={}),
-            steps=g(view, "steps", default=[]),
+            id=self._get(view, "id"),
+            session_id=self._get(view, "session_id") or self._get(view, "sessionId"),
+            status=self._get(view, "status"),
+            is_success=self._get(view, "is_success") or self._get(view, "isSuccess"),
+            done_output=self._get(view, "done_output") or self._get(view, "doneOutput"),
+            live_url=self._session_live_url(view),
+            started_at=started_at,
+            finished_at=finished_at,
+            metadata=self._get(view, "metadata", default={}),
+            steps=steps,
         )
 
     def _session_live_url(self, view: Any) -> Optional[str]:
-        try:
-            session = getattr(view, "session", None) or (view.get("session") if isinstance(view, dict) else None)
-            if not session:
-                return None
-            return getattr(session, "live_url", None) or getattr(session, "liveUrl", None) \
-                or (session.get("live_url") or session.get("liveUrl"))
-        except Exception:
+        session = self._get(view, "session", default=None) or {}
+        if not session:
             return None
+        return self._get(session, "live_url") or self._get(session, "liveUrl")
 
     def _resolve_secrets_from_task(self, task_text: str) -> Dict[str, str]:
         """
-        Find all <secret>key</secret> in the task and look up env vars for each key.
-        No domain hardcoding. We try a few common patterns:
-          - KEY (uppercased, non-alnum -> '_')
-          - SECRET__KEY
-          - BROWSER_USE_SECRET__KEY
+        Extract <secret>keys</secret> from task and map to env without hardcoding domains:
+          KEY -> $KEY | $SECRET__KEY | $BROWSER_USE_SECRET__KEY
         """
         keys = set(re.findall(r"<secret>([^<]+)</secret>", task_text or ""))
         out: Dict[str, str] = {}
         for key in keys:
             norm = re.sub(r"[^A-Za-z0-9]", "_", key).upper()
-            candidates = [
-                norm,
-                f"SECRET__{norm}",
-                f"BROWSER_USE_SECRET__{norm}",
-            ]
-            for env_key in candidates:
-                val = os.getenv(env_key)
+            for candidate in (norm, f"SECRET__{norm}", f"BROWSER_USE_SECRET__{norm}"):
+                val = os.getenv(candidate)
                 if val:
                     out[key] = val
                     break
         return out
 
+    def _to_jsonable(self, obj: Any) -> Any:
+        """
+        Convert SDK update objects (Pydantic models) into JSON-safe dicts.
+        - Uses .model_dump(mode="json") when available (Pydantic v2).
+        - Falls back to plain dict / __dict__ / string as last resort.
+        """
+        try:
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump(mode="json")  # type: ignore[attr-defined]
+            if isinstance(obj, dict):
+                return obj
+            return json.loads(json.dumps(obj, default=lambda o: getattr(o, "__dict__", str(o))))
+        except Exception:
+            try:
+                return str(obj)
+            except Exception:
+                return None
+
+    def _get(self, obj: Any, name: str, default=None):
+        if hasattr(obj, name):
+            return getattr(obj, name)
+        if isinstance(obj, dict) and name in obj:
+            return obj[name]
+        return default
+
     def _fmt_step(self, step: Dict[str, Any]) -> str:
-        num = step.get("number")
-        url = step.get("url")
-        acts = step.get("actions") or []
-        acts_s = ", ".join(acts) if isinstance(acts, list) else str(acts)
-        return f"[browser] step #{num} on {url or 'unknown'}; actions: {acts_s}"
+        num = self._get(step, "number", 0)
+        url = self._get(step, "url", "unknown")
+        acts = self._get(step, "actions", [])
+        if not isinstance(acts, list):
+            acts = [acts]
+        acts_s = ", ".join([str(a) for a in acts])
+        return f"[browser] step #{num} on {url}; actions: {acts_s}"
