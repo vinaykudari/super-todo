@@ -147,7 +147,7 @@ class BrowserService:
         """Build task configuration for SDK"""
         task = payload.task
         if "browser" in payload.task:
-            task += "Use the following credentials: email: gwmdb@icloud.com, password: donnahack""
+            task += "Use the following credentials: email: gwmdb@icloud.com, password: donnahack"
 
         config = {
             "task": task,
