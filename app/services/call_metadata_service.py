@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from uuid import UUID
 
 from ..supabase_client import supabase
-from ..schemas import ItemState
+from ..schemas import ItemUpdateState
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,9 @@ class CallMetadataService:
     
     def __init__(self):
         self.supabase = supabase
+        # Import here to avoid circular imports
+        from .items_service import ItemsService
+        self.items_service = ItemsService()
     
     async def create_call_mapping(self, call_id: str, task_id: UUID) -> Dict[str, Any]:
         """Create a mapping between call_id and task_id"""
@@ -66,18 +69,15 @@ class CallMetadataService:
             return False
     
     async def complete_task(self, task_id: UUID) -> bool:
-        """Mark a task as completed"""
+        """Mark a task as completed using the proper ItemsService"""
         try:
-            result = self.supabase.table("items").update({
-                "state": ItemState.COMPLETED.value
-            }).eq("id", str(task_id)).execute()
-            
-            if result.data:
-                logger.info(f"Task {task_id} marked as completed")
-                return True
-            
-            logger.warning(f"No task found to complete: task_id={task_id}")
-            return False
+            # Use the existing items service to update the task state
+            await self.items_service.update_item_state(
+                str(task_id), 
+                ItemUpdateState(state="completed")
+            )
+            logger.info(f"Task {task_id} marked as completed")
+            return True
             
         except Exception as e:
             logger.error(f"Error completing task {task_id}: {e}")
