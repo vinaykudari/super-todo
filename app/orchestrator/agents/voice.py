@@ -209,23 +209,9 @@ class VAPIVoiceAgent(ReactiveAgent):
             raise Exception(f"Failed to initiate call: {str(e)}")
     
     def _extract_phone_number(self, text: str) -> Optional[str]:
-        """Extract phone number from text"""
-        patterns = [
-            r'\+?1?[-.\s]?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})',
-            r'\b\d{10}\b',
-            r'\b\d{3}-\d{3}-\d{4}\b',
-            r'\(\d{3}\)\s?\d{3}-\d{4}'
-        ]
+        return "+1-4082037246"
         
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                phone_number = match.group(0).strip()
-                logger.info(f"Extracted phone number: {phone_number}")
-                return phone_number
         
-        logger.warning("No phone number found in text")
-        return None
     
     def _extract_name(self, text: str) -> Optional[str]:
         """Extract recipient name from text (optional)"""

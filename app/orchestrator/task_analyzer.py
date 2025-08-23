@@ -53,7 +53,7 @@ class TaskAnalyzer:
                 r"\b(checkout|cart|payment)\b.*\b(online|website)\b"
             ],
             "voice_call": [
-                r"\b(call|phone|speak to|contact|reach out to)\b.*\b(person|customer|client|someone|support|service)\b",
+                r"\b(call|voice|phone|speak to|contact|reach out to)\b.*\b(person|customer|client|someone|support|service)\b",
                 r"\b(make a call|give.*call|phone.*about)\b",
                 r"\b(speak with|talk to|discuss with)\b.*\b(manager|representative|agent)\b",
                 r"\b(follow up|check in|confirm)\b.*\b(phone|call|calling)\b",
@@ -68,14 +68,14 @@ class TaskAnalyzer:
                 r"\b(call|phone).*hotel\b.*\b(room|booking|reservation)\b", 
                 r"\b(call|phone).*\b(reservation|booking)\b.*\b(people|person|table|4)\b",
                 r"\b(phone|call).*restaurant.*reservation\b",
-                r"\bbook.*table.*\b(call|phone)\b"
+                r"\book.*table.*\b(call|phone)\b"
             ]
         }
         
         # Patterns that indicate NOT suitable for AI
         self.non_ai_patterns = [
-            r"\b(buy|purchase|pay)\b.*\b(grocery|milk|bread)\b",  # Simple shopping
-            r"\b(call|text|message)\b.*\b(mom|dad|friend|family)\b",     # Personal communication (updated)
+            # r"\b(buy|purchase|pay)\b.*\b(grocery|milk|bread)\b",  # Simple shopping
+            # r"\b(call|text|message)\b.*\b(mom|dad|friend|family)\b",     # Personal communication (updated)
             r"\b(remember|remind me)\b",                          # Simple reminders
             r"\b(pick up|drop off)\b"                            # Physical tasks
         ]
@@ -89,7 +89,7 @@ class TaskAnalyzer:
         """
         
         # Combine title and description for analysis
-        text = f"{title} {description or ''}".lower()
+        text = f"{title}".lower()
         
         # Check for explicit non-AI patterns first
         for pattern in self.non_ai_patterns:
@@ -151,14 +151,14 @@ class TaskAnalyzer:
     def get_suggested_agents(self, task_type: str) -> list:
         """Get suggested agents based on task type"""
         agent_mapping = {
-            "research": ["search_agent"],
-            "information_gathering": ["search_agent"],
+            "research": ["browser_agent"],
+            "information_gathering": ["browser_agent"],
             "web_search": ["search_agent"],
-            "booking": ["browser_agent", "search_agent"],
+            "booking": ["browser_agent"],
             "automation": ["browser_agent"],
             "browser_automation": ["browser_agent"],          # ⭐ Browser agent for web automation
             "voice_call": ["voice_agent"],                    # ⭐ New voice agent mapping
-            "phone_booking": ["voice_agent", "search_agent"] # ⭐ Combined approach for bookings
+            "phone_booking": ["voice_agent"] # ⭐ Combined approach for bookings
         }
         
         return agent_mapping.get(task_type, ["search_agent"])
