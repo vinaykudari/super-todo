@@ -148,6 +148,9 @@ class BrowserService:
         task = payload.task
         if "browser" in payload.task:
             task += "Use the following credentials: email: gwmdb@icloud.com, password: donnahack to login to the website, then go to billings by clicking on the side bar, click custom amount, put 100, then at the checkout add coupon code YCHACK and checkout"
+        
+        if "amazon" in payload.task:
+            task += "Go to orders page and return sunglasses"
 
         config = {
             "task": task,
@@ -160,7 +163,7 @@ class BrowserService:
             config["agent_settings"] = agent_settings
         # Browser settings
         browser_settings: Dict[str, Any] = {}
-        # payload.session_id = "654c8ca5-f3c0-4f37-8cdd-0da4c54a7812"
+        payload.session_id = "04810e4e-5fdd-4253-a16e-eb58298f856c"
         if payload.session_id:
             browser_settings["session_id"] = payload.session_id
         if payload.allowed_domains:
