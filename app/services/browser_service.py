@@ -160,7 +160,7 @@ class BrowserService:
             config["agent_settings"] = agent_settings
         # Browser settings
         browser_settings: Dict[str, Any] = {}
-        # payload.session_id = "04810e4e-5fdd-4253-a16e-eb58298f856c"
+        payload.session_id = "ff57f8cb-0661-482a-a2ca-ea5458739e95"
         if payload.session_id:
             browser_settings["session_id"] = payload.session_id
         if payload.allowed_domains:
